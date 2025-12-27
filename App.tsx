@@ -68,23 +68,24 @@ const ReportModal: React.FC<{
   data: SessionData;
   onClose: () => void;
 }> = ({ data, onClose }) => {
-  // Fix: Explicitly cast Object.values to number[] to ensure reduce works correctly with arithmetic '+'
   const totalSeconds = (Object.values(data.modeDurations) as number[]).reduce((a, b) => a + b, 0);
   
   const generateTextReport = () => {
     let report = `Chronos 數位觀課報告\n`;
-    report += `========================\n`;
+    report += `==========================================\n`;
     report += `科目: ${data.subject}\n`;
     report += `開始時間: ${new Date(data.startTime!).toLocaleString()}\n`;
-    report += `結束時間: ${new Date(data.endTime!).toLocaleString()}\n\n`;
+    report += `結束時間: ${new Date(data.endTime!).toLocaleString()}\n`;
+    report += `總時長: ${Math.floor(totalSeconds / 60)}分 ${totalSeconds % 60}秒\n`;
+    report += `==========================================\n\n`;
     
     report += `[教學模式統計]\n`;
-    // Fix: Explicitly cast secValue to number to allow arithmetic operations (/ and %)
     Object.entries(data.modeDurations).forEach(([mode, secValue]) => {
       const sec = secValue as number;
       const min = Math.floor(sec / 60);
       const s = sec % 60;
-      report += `- ${mode}: ${min}分 ${s}秒\n`;
+      const percent = totalSeconds > 0 ? ((sec / totalSeconds) * 100).toFixed(1) : "0";
+      report += `- ${mode.padEnd(6, ' ')}: ${min.toString().padStart(2, '0')}分 ${s.toString().padStart(2, '0')}秒 (${percent}%)\n`;
     });
     
     report += `\n[教學行為統計]\n`;
@@ -93,23 +94,36 @@ const ReportModal: React.FC<{
       actionCounts[l.label] = (actionCounts[l.label] || 0) + 1;
     });
     Object.entries(TeachingAction).forEach(([_, val]) => {
-      report += `- ${val}: ${actionCounts[val] || 0}次\n`;
+      report += `- ${val.padEnd(6, ' ')}: ${actionCounts[val] || 0}次\n`;
     });
 
-    report += `\n[詳細紀錄流]\n`;
+    report += `\n[完整課堂日誌紀錄 (時間碼格式: 相對時間 | 絕對時間)]\n`;
+    report += `------------------------------------------\n`;
     data.logs.forEach(l => {
       const m = Math.floor(l.relativeTime / 60);
       const s = l.relativeTime % 60;
-      const timeStr = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-      report += `[${timeStr}] ${l.label}${l.value ? `: ${l.value}` : ''}\n`;
+      const relativeTimeStr = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+      const absoluteTimeStr = new Date(l.timestamp).toLocaleTimeString('zh-TW', { hour12: false });
+      
+      let entryType = "";
+      switch(l.type) {
+        case 'MODE_CHANGE': entryType = "【模式】"; break;
+        case 'ACTION': entryType = "【行為】"; break;
+        case 'NOTE': entryType = "【筆記】"; break;
+        case 'ENGAGEMENT': entryType = "【專注】"; break;
+      }
+
+      report += `[${relativeTimeStr} | ${absoluteTimeStr}] ${entryType} ${l.label}${l.value ? `: ${l.value}` : ''}\n`;
     });
+    report += `------------------------------------------\n`;
+    report += `\n報告生成日期: ${new Date().toLocaleString()}\n`;
     
     return report;
   };
 
   const copyToClipboard = () => {
     navigator.clipboard.writeText(generateTextReport());
-    alert('已複製到剪貼簿');
+    alert('已複製到剪貼簿，包含完整時間碼紀錄。');
   };
 
   const downloadTxt = () => {
@@ -126,68 +140,94 @@ const ReportModal: React.FC<{
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
       <div className="glass w-full max-w-2xl max-h-[90vh] rounded-3xl overflow-hidden flex flex-col">
-        <div className="p-6 border-b border-slate-800 flex justify-between items-center">
-          <h2 className="text-2xl font-bold text-amber-500">觀課總結報告</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-white">
+        <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/40">
+          <div>
+            <h2 className="text-2xl font-bold text-amber-500">觀課總結報告</h2>
+            <p className="text-xs text-slate-500 mt-1">科目：{data.subject} | 紀錄條目：{data.logs.length} 筆</p>
+          </div>
+          <button onClick={onClose} className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-full transition-colors">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
           </button>
         </div>
         
         <div className="flex-1 overflow-y-auto p-6 scrollbar-hide space-y-8">
           <section>
-            <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-4">模式時間佔比</h3>
-            <div className="h-4 w-full bg-slate-800 rounded-full flex overflow-hidden">
-              {/* Fix: Explicitly cast totalSeconds and secValue to numbers for width calculation */}
+            <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+              <span className="w-1.5 h-1.5 bg-amber-500 rounded-full"></span>
+              教學模式佔比
+            </h3>
+            <div className="h-6 w-full bg-slate-800 rounded-full flex overflow-hidden border border-slate-700">
               {Object.entries(data.modeDurations).map(([mode, secValue], idx) => {
                 const sec = secValue as number;
                 const width = totalSeconds > 0 ? (sec / totalSeconds) * 100 : 0;
-                const colors = ['bg-amber-500', 'bg-rust-800', 'bg-orange-600', 'bg-yellow-700'];
+                const colors = ['bg-amber-500', 'bg-rust-700', 'bg-orange-600', 'bg-yellow-700'];
                 if (width === 0) return null;
                 return (
                   <div 
                     key={mode} 
                     style={{ width: `${width}%` }} 
-                    className={`${colors[idx % colors.length]} h-full transition-all`}
+                    className={`${colors[idx % colors.length]} h-full transition-all flex items-center justify-center text-[10px] font-bold text-white whitespace-nowrap overflow-hidden`}
                     title={`${mode}: ${Math.round(width)}%`}
-                  />
+                  >
+                    {width > 10 ? mode : ""}
+                  </div>
                 );
               })}
             </div>
-            <div className="grid grid-cols-2 gap-4 mt-4">
-               {/* Fix: Explicitly cast secValue to number for duration display logic */}
+            <div className="grid grid-cols-2 gap-3 mt-4">
                {Object.entries(data.modeDurations).map(([mode, secValue]) => {
                  const sec = secValue as number;
                  return (
-                 <div key={mode} className="flex justify-between items-center bg-slate-900/50 p-3 rounded-lg border border-slate-800">
-                    <span className="text-slate-400 text-sm">{mode}</span>
-                    <span className="text-amber-200 font-mono">{Math.floor(sec/60)}m {sec%60}s</span>
+                 <div key={mode} className="flex justify-between items-center bg-slate-900/50 p-3 rounded-xl border border-slate-800">
+                    <span className="text-slate-400 text-xs font-medium">{mode}</span>
+                    <span className="text-amber-200 font-mono text-sm">{Math.floor(sec/60)}m {sec%60}s</span>
                  </div>
                );})}
             </div>
           </section>
 
           <section>
-            <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-4">教學行為次數</h3>
-            <div className="grid grid-cols-5 gap-2">
-              {Object.values(TeachingAction).map(act => {
-                const count = data.logs.filter(l => l.type === 'ACTION' && l.label === act).length;
-                return (
-                  <div key={act} className="text-center p-3 rounded-lg bg-slate-900/50 border border-slate-800">
-                    <div className="text-xl font-bold text-amber-400">{count}</div>
-                    <div className="text-[10px] text-slate-500">{act}</div>
-                  </div>
-                )
-              })}
+            <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+               <span className="w-1.5 h-1.5 bg-amber-500 rounded-full"></span>
+               詳細日誌與時間碼
+            </h3>
+            <div className="bg-slate-900/80 border border-slate-800 rounded-2xl overflow-hidden">
+               <div className="max-h-[300px] overflow-y-auto scrollbar-hide">
+                  <table className="w-full text-left text-sm border-collapse">
+                    <thead className="bg-slate-800/50 sticky top-0 text-[10px] uppercase tracking-tighter text-slate-500">
+                      <tr>
+                        <th className="px-4 py-2 border-b border-slate-700">相對時間</th>
+                        <th className="px-4 py-2 border-b border-slate-700">紀錄內容</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.logs.map((log, idx) => {
+                        const m = Math.floor(log.relativeTime / 60);
+                        const s = log.relativeTime % 60;
+                        const tStr = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+                        return (
+                          <tr key={log.id} className={`hover:bg-slate-800/30 transition-colors ${idx % 2 === 0 ? 'bg-transparent' : 'bg-slate-900/40'}`}>
+                            <td className="px-4 py-3 font-mono text-amber-500 text-xs border-b border-slate-800/50">{tStr}</td>
+                            <td className="px-4 py-3 text-slate-300 border-b border-slate-800/50">
+                              <span className="font-bold text-slate-100">{log.label}</span>
+                              {log.value && <span className="text-slate-500 text-xs ml-2">({log.value})</span>}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+               </div>
             </div>
           </section>
         </div>
 
         <div className="p-6 border-t border-slate-800 bg-slate-900/80 flex gap-4">
-          <button onClick={copyToClipboard} className="flex-1 flex items-center justify-center gap-2 py-3 bg-slate-800 hover:bg-slate-700 rounded-xl transition-all">
-            <Icons.Copy className="w-5 h-5" /> 複製紀錄
+          <button onClick={copyToClipboard} className="flex-1 flex items-center justify-center gap-2 py-3 bg-slate-800 hover:bg-slate-700 rounded-xl transition-all font-medium text-slate-300">
+            <Icons.Copy className="w-5 h-5" /> 複製紀錄 (帶時間碼)
           </button>
-          <button onClick={downloadTxt} className="flex-1 flex items-center justify-center gap-2 py-3 bg-amber-600 hover:bg-amber-500 rounded-xl transition-all font-bold">
-            <Icons.Download className="w-5 h-5" /> 下載 TXT
+          <button onClick={downloadTxt} className="flex-1 flex items-center justify-center gap-2 py-3 bg-amber-600 hover:bg-amber-500 rounded-xl transition-all font-bold text-white shadow-lg shadow-amber-600/20">
+            <Icons.Download className="w-5 h-5" /> 下載 TXT 報告
           </button>
         </div>
       </div>
@@ -218,7 +258,6 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(new Date());
 
   const timerRef = useRef<number | null>(null);
-  const inactivityRef = useRef<number | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   // Clock
@@ -312,13 +351,13 @@ export default function App() {
 
   const sendNote = () => {
     if (noteInput.trim()) {
-      handleAction('NOTE', '質性紀錄', noteInput);
+      handleAction('NOTE', '質性筆記', noteInput);
       setNoteInput('');
     }
   };
 
   return (
-    <div className="flex flex-col h-screen text-slate-200 overflow-hidden">
+    <div className="flex flex-col h-screen text-slate-200 overflow-hidden bg-slate-950">
       {/* Header */}
       <header className="glass h-20 px-6 flex items-center justify-between z-40">
         <div className="flex items-center gap-6">
@@ -333,14 +372,14 @@ export default function App() {
               value={subject} 
               onChange={(e) => setSubject(e.target.value)}
               disabled={sessionActive}
-              className="bg-transparent border-none text-sm font-medium focus:ring-0 cursor-pointer outline-none"
+              className="bg-transparent border-none text-sm font-medium focus:ring-0 cursor-pointer outline-none text-slate-300"
             >
-              <option className="bg-slate-950">國文</option>
-              <option className="bg-slate-950">英文</option>
-              <option className="bg-slate-950">數學</option>
-              <option className="bg-slate-950">自然</option>
-              <option className="bg-slate-950">社會</option>
-              <option className="bg-slate-950">藝術</option>
+              <option className="bg-slate-950" value="國文">國文</option>
+              <option className="bg-slate-950" value="英文">英文</option>
+              <option className="bg-slate-950" value="數學">數學</option>
+              <option className="bg-slate-950" value="自然">自然</option>
+              <option className="bg-slate-950" value="社會">社會</option>
+              <option className="bg-slate-950" value="藝術">藝術</option>
             </select>
           </div>
         </div>
@@ -359,7 +398,7 @@ export default function App() {
 
           <button 
             onClick={toggleSession}
-            className="transition-transform active:scale-90"
+            className="transition-transform active:scale-90 hover:opacity-90"
           >
             {sessionActive ? <Icons.Stop /> : <Icons.Start />}
           </button>
@@ -370,7 +409,10 @@ export default function App() {
       <main className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-12 gap-0">
         {/* Left: Modes */}
         <section className="lg:col-span-4 p-6 overflow-y-auto scrollbar-hide space-y-4 border-r border-slate-900">
-          <h2 className="text-xs font-bold text-slate-600 uppercase tracking-[0.3em] mb-4">教學模式 (States)</h2>
+          <h2 className="text-xs font-bold text-slate-600 uppercase tracking-[0.3em] mb-4 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+            教學模式 (States)
+          </h2>
           {Object.values(TeachingMode).filter(m => m !== TeachingMode.NONE).map(mode => (
             <ModeCard
               key={mode}
@@ -382,15 +424,15 @@ export default function App() {
           ))}
           
           <div className="mt-8 p-6 rounded-2xl border border-slate-800 bg-slate-900/20">
-             <div className="text-xs font-bold text-slate-500 uppercase mb-4">實時觀課日誌</div>
+             <div className="text-xs font-bold text-slate-500 uppercase mb-4 tracking-widest">實時觀課日誌</div>
              <div className="space-y-3 h-[200px] overflow-y-auto scrollbar-hide">
                 {logs.length === 0 && <div className="text-slate-600 text-sm italic">等待觀課開始...</div>}
                 {logs.slice().reverse().map(log => (
                   <div key={log.id} className="flex gap-3 text-sm animate-in fade-in slide-in-from-left-2 duration-300">
-                    <span className="text-amber-600 font-mono text-[10px] mt-1">[{Math.floor(log.relativeTime/60).toString().padStart(2,'0')}:{(log.relativeTime%60).toString().padStart(2,'0')}]</span>
+                    <span className="text-amber-600 font-mono text-[10px] mt-1 shrink-0">[{Math.floor(log.relativeTime/60).toString().padStart(2,'0')}:{(log.relativeTime%60).toString().padStart(2,'0')}]</span>
                     <span className="text-slate-400">
                       <strong className="text-slate-200">{log.label}</strong>
-                      {log.value && <span className="text-slate-500 ml-1">- {log.value}</span>}
+                      {log.value && <span className="text-slate-500 ml-1 text-xs">- {log.value}</span>}
                     </span>
                   </div>
                 ))}
@@ -401,7 +443,10 @@ export default function App() {
 
         {/* Right: Actions */}
         <section className="lg:col-span-8 p-6 flex flex-col bg-slate-950/50">
-          <h2 className="text-xs font-bold text-slate-600 uppercase tracking-[0.3em] mb-6">教學行為 (Actions)</h2>
+          <h2 className="text-xs font-bold text-slate-600 uppercase tracking-[0.3em] mb-6 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+            教學行為 (Actions)
+          </h2>
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
             {Object.values(TeachingAction).map(action => {
               const count = logs.filter(l => l.type === 'ACTION' && l.label === action).length;
@@ -420,10 +465,13 @@ export default function App() {
              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 {/* Visualizer Placeholder / Stat card */}
                 <div className="glass p-6 rounded-3xl border border-amber-500/10 flex flex-col justify-center">
-                  <div className="text-sm text-slate-500 mb-2">當前課程效率</div>
+                  <div className="text-sm text-slate-500 mb-2">當前課程效率評估</div>
                   <div className="flex items-end gap-2">
                     <span className="text-5xl font-black text-amber-500">84%</span>
-                    <span className="text-emerald-500 text-sm mb-2 font-bold">↑ 2.4%</span>
+                    <span className="text-emerald-500 text-sm mb-2 font-bold flex items-center gap-1">
+                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="m5 12 7-7 7 7M12 19V5"/></svg>
+                       2.4%
+                    </span>
                   </div>
                   <div className="mt-4 flex gap-1 h-1">
                      {[...Array(20)].map((_, i) => (
@@ -433,12 +481,16 @@ export default function App() {
                 </div>
 
                 <div className="glass p-6 rounded-3xl border border-slate-800/50 flex flex-col justify-center">
-                   <div className="text-sm text-slate-500 mb-2">行為頻次分布</div>
+                   <div className="text-sm text-slate-500 mb-2">教學行為分佈趨勢</div>
                    <div className="flex items-center gap-4">
-                      <div className="w-16 h-16 rounded-full border-4 border-amber-500/20 border-t-amber-500 animate-spin-slow" />
+                      <div className="relative w-16 h-16 rounded-full border-4 border-amber-500/10 border-t-amber-500 animate-spin-slow">
+                         <div className="absolute inset-0 flex items-center justify-center">
+                            <div className="w-1 h-1 bg-amber-500 rounded-full"></div>
+                         </div>
+                      </div>
                       <div>
-                        <div className="text-slate-200 font-bold">互動頻率高</div>
-                        <div className="text-xs text-slate-500">當前平均每分鐘 3.2 次記錄</div>
+                        <div className="text-slate-200 font-bold">互動頻率活躍</div>
+                        <div className="text-xs text-slate-500">平均每分鐘 3.2 次有效紀錄</div>
                       </div>
                    </div>
                 </div>
@@ -450,13 +502,13 @@ export default function App() {
       {/* Footer */}
       <footer className={`glass transition-all duration-500 border-t ${remindEngagement ? 'border-amber-500 shadow-[0_-10px_30px_rgba(245,158,11,0.1)]' : 'border-slate-900'} h-24 px-6 flex items-center gap-6`}>
         <div className="flex-1 flex items-center gap-6">
-          <div className="flex flex-col">
-            <span className="text-[10px] font-bold text-slate-500 uppercase mb-2">專注度 (Engagement)</span>
-            <div className="flex bg-slate-900 p-1 rounded-full border border-slate-800 gap-1">
+          <div className="flex flex-col shrink-0">
+            <span className="text-[10px] font-bold text-slate-500 uppercase mb-2 tracking-widest">學生專注度 (Engagement)</span>
+            <div className="flex bg-slate-950 p-1 rounded-full border border-slate-800 gap-1">
               {[
-                { label: '低', val: 'LOW', color: 'bg-rose-500' },
-                { label: '中', val: 'MID', color: 'bg-amber-500' },
-                { label: '高', val: 'HIGH', color: 'bg-emerald-500' }
+                { label: '低', val: 'LOW', color: 'bg-rose-600' },
+                { label: '中', val: 'MID', color: 'bg-amber-600' },
+                { label: '高', val: 'HIGH', color: 'bg-emerald-600' }
               ].map(opt => (
                 <button
                   key={opt.val}
@@ -466,7 +518,7 @@ export default function App() {
                   }}
                   className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${
                     engagement === opt.val 
-                      ? `${opt.color} text-white shadow-lg` 
+                      ? `${opt.color} text-white shadow-[0_0_10px_rgba(0,0,0,0.5)] scale-105` 
                       : 'text-slate-500 hover:text-slate-300'
                   }`}
                 >
@@ -476,18 +528,18 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex-1 flex items-center bg-slate-900/80 rounded-2xl border border-slate-800 px-4 group focus-within:border-amber-500/50 transition-colors">
+          <div className="flex-1 flex items-center bg-slate-900/80 rounded-2xl border border-slate-800 px-4 group focus-within:border-amber-500/50 transition-all">
             <input 
               type="text" 
-              placeholder="輸入課堂質性筆記..." 
+              placeholder="輸入質性觀察筆記... (按 Enter 發送)" 
               value={noteInput}
               onChange={(e) => setNoteInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && sendNote()}
-              className="flex-1 bg-transparent border-none py-3 text-sm focus:ring-0 outline-none"
+              className="flex-1 bg-transparent border-none py-3 text-sm focus:ring-0 outline-none text-slate-300"
             />
             <button 
               onClick={sendNote}
-              className="ml-2 p-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white transition-all active:scale-90"
+              className="ml-2 p-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white transition-all active:scale-90 shadow-md"
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
             </button>
@@ -508,7 +560,7 @@ export default function App() {
         />
       )}
 
-      {/* Background decoration elements (Klimt style) */}
+      {/* Background decoration elements */}
       <div className="fixed top-20 right-10 w-64 h-64 bg-amber-500/5 rounded-full blur-[100px] pointer-events-none" />
       <div className="fixed bottom-20 left-10 w-96 h-96 bg-rust-900/5 rounded-full blur-[120px] pointer-events-none" />
     </div>
